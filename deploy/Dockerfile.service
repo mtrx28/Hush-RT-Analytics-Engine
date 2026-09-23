@@ -1,0 +1,18 @@
+# Builds any one workspace binary, selected by BIN_NAME, into a small
+# runtime image. Shared across all five services via --build-arg.
+FROM rust:1-bookworm AS builder
+ARG BIN_NAME
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    librdkafka-dev pkg-config cmake \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /work
+COPY . .
+RUN cargo build --release -p ${BIN_NAME}
+RUN cp target/release/${BIN_NAME} /usr/local/bin/service
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates librdkafka1 libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/local/bin/service /usr/local/bin/service
+ENTRYPOINT ["/usr/local/bin/service"]

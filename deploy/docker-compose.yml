@@ -1,0 +1,162 @@
+name: hush
+
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: hush-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:19093,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:19093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      CLUSTER_ID: hush-single-node-cluster
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:19092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  kafka-init:
+    image: apache/kafka:3.9.0
+    container_name: hush-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/scripts/create-topics.sh"]
+    volumes:
+      - ../scripts:/scripts:ro
+    environment:
+      KAFKA_BOOTSTRAP: kafka:19092
+
+  postgres:
+    image: postgres:16
+    container_name: hush-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: hush
+      POSTGRES_PASSWORD: hush
+      POSTGRES_DB: hush
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hush"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - hush-postgres-data:/var/lib/postgresql/data
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: hush-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: hush-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: hush
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+  ingest-gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.service
+      args:
+        BIN_NAME: ingest-gateway
+    container_name: hush-ingest-gateway
+    ports:
+      - "8080:8080"
+      - "9100:9100"
+    environment:
+      KAFKA_BROKERS: kafka:19092
+      EVENTS_TOPIC: events
+      PSEUDONYM_SALT: ${PSEUDONYM_SALT:-dev-only-change-me}
+      INGEST_BIND_ADDR: 0.0.0.0:8080
+      INGEST_METRICS_ADDR: 0.0.0.0:9100
+      RUST_LOG: info
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+  wiki-source:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.service
+      args:
+        BIN_NAME: wiki-source
+    container_name: hush-wiki-source
+    environment:
+      GATEWAY_URL: http://ingest-gateway:8080/v1/events
+      WIKI_SOURCE_METRICS_ADDR: 0.0.0.0:9101
+      RUST_LOG: info
+    ports:
+      - "9101:9101"
+    depends_on:
+      - ingest-gateway
+
+  aggregator:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.service
+      args:
+        BIN_NAME: aggregator
+    # No fixed container_name or host port mapping: scale with
+    # `docker compose up --scale aggregator=3`, which needs to allocate a
+    # fresh container name and metrics port per replica.
+    environment:
+      KAFKA_BROKERS: kafka:19092
+      EVENTS_TOPIC: events
+      AGGREGATOR_GROUP_ID: hush-aggregator
+      DATABASE_URL: postgres://hush:hush@postgres:5432/hush
+      AGGREGATOR_METRICS_ADDR: 0.0.0.0:9102
+      RUST_LOG: info
+    expose:
+      - "9102"
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  query-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.service
+      args:
+        BIN_NAME: query-api
+    container_name: hush-query-api
+    ports:
+      - "8081:8081"
+      - "9103:9103"
+    environment:
+      DATABASE_URL: postgres://hush:hush@postgres:5432/hush
+      QUERY_BIND_ADDR: 0.0.0.0:8081
+      QUERY_METRICS_ADDR: 0.0.0.0:9103
+      PRIVACY_K: 10
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  hush-postgres-data:

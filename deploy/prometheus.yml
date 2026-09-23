@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: ingest-gateway
+    static_configs:
+      - targets: ["ingest-gateway:9100"]
+
+  - job_name: wiki-source
+    static_configs:
+      - targets: ["wiki-source:9101"]
+
+  - job_name: aggregator
+    dns_sd_configs:
+      - names: ["aggregator"]
+        type: A
+        port: 9102
+        refresh_interval: 15s
+
+  - job_name: query-api
+    static_configs:
+      - targets: ["query-api:9103"]

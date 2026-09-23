@@ -1,0 +1,59 @@
+{
+  "title": "Hush Overview",
+  "uid": "hush-overview",
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Ingest accepted / 503s per sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "rate(ingest_events_accepted_total[1m])", "legendFormat": "accepted" },
+        { "expr": "rate(ingest_backpressure_503_total[1m])", "legendFormat": "503 backpressure" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Aggregator consumer lag by partition",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "aggregator_consumer_lag", "legendFormat": "partition {{partition}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Late / duplicate events per sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "rate(aggregator_late_events_total[1m])", "legendFormat": "late" },
+        { "expr": "rate(aggregator_duplicate_events_total[1m])", "legendFormat": "duplicate" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Windows flushed / flush errors per sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "rate(aggregator_windows_flushed_total[1m])", "legendFormat": "flushed" },
+        { "expr": "rate(aggregator_flush_errors_total[1m])", "legendFormat": "errors" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "wiki-source events sent / send errors per sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "rate(wiki_source_events_sent_total[1m])", "legendFormat": "sent" },
+        { "expr": "rate(wiki_source_send_errors_total[1m])", "legendFormat": "errors" }
+      ]
+    }
+  ]
+}
