@@ -1,0 +1,22 @@
+[package]
+name = "query-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+common = { path = "../common" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+sqlx.workspace = true
+moka.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
