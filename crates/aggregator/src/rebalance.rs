@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration as StdDuration;
 
 use chrono::{Duration, Utc};
 use rdkafka::consumer::{Consumer, ConsumerContext, Rebalance, StreamConsumer};
-use rdkafka::{ClientContext, Offset, TopicPartitionList};
+use rdkafka::{ClientContext, Offset};
 use sqlx::PgPool;
 use tokio::runtime::Handle;
 use tracing::{info, warn};
@@ -21,6 +22,16 @@ pub type SharedStates = Arc<Mutex<HashMap<i32, PartitionState>>>;
 /// Rebalance callbacks run on librdkafka's internal poll thread, not on the
 /// Tokio runtime, so the Postgres load in `post_rebalance` is driven via a
 /// borrowed `tokio::runtime::Handle::block_on` rather than being spawned.
+///
+/// Note on applying the rebalance itself: `ConsumerContext::rebalance()` has
+/// a default implementation that already calls `incremental_assign`/
+/// `incremental_unassign` for the negotiated protocol, sandwiched around
+/// calls to `pre_rebalance`/`post_rebalance`. Overriding only those two
+/// hooks (as this type does) is therefore enough — calling
+/// `incremental_assign` again ourselves here would race the library's own
+/// call and fail with "already part of the current assignment". Instead,
+/// `post_rebalance` repositions each already-assigned partition with
+/// `seek()`, which is safe to call once the partition is owned.
 pub struct RebalanceContext {
     pool: PgPool,
     states: SharedStates,
@@ -51,25 +62,13 @@ impl ClientContext for RebalanceContext {}
 impl ConsumerContext for RebalanceContext {
     fn pre_rebalance(&self, rebalance: &Rebalance) {
         if let Rebalance::Revoke(tpl) = rebalance {
-            {
-                let mut states = self.states.lock().unwrap();
-                for elem in tpl.elements() {
-                    info!(
-                        partition = elem.partition(),
-                        "partition revoked, dropping in-memory window state (already-flushed data is safe in postgres)"
-                    );
-                    states.remove(&elem.partition());
-                }
-            }
-
-            // We've overridden the default rebalance handling entirely (by
-            // implementing these callbacks at all), so we're also on the
-            // hook for actually applying the revoke. `cooperative-sticky`
-            // requires the incremental variant, not plain `unassign()`.
-            if let Some(consumer) = self.consumer.lock().unwrap().as_ref().and_then(Weak::upgrade) {
-                if let Err(e) = consumer.incremental_unassign(tpl) {
-                    warn!(error = %e, "failed to incrementally unassign revoked partitions");
-                }
+            let mut states = self.states.lock().unwrap();
+            for elem in tpl.elements() {
+                info!(
+                    partition = elem.partition(),
+                    "partition revoked, dropping in-memory window state (already-flushed data is safe in postgres)"
+                );
+                states.remove(&elem.partition());
             }
         }
     }
@@ -87,7 +86,6 @@ impl ConsumerContext for RebalanceContext {
                 return;
             };
 
-            let mut seek_tpl = TopicPartitionList::new();
             for elem in tpl.elements() {
                 let partition = elem.partition();
                 let topic = elem.topic().to_string();
@@ -104,27 +102,32 @@ impl ConsumerContext for RebalanceContext {
                     rt.block_on(db::load_progress(&pool, partition))
                 });
                 let (offset, watermark, seek_offset) = match progress {
-                    Ok(Some(p)) => (p.committed_offset, p.flushed_watermark, Offset::Offset(p.committed_offset)),
-                    Ok(None) => (0, Utc::now() - Duration::days(1), Offset::Beginning),
+                    Ok(Some(p)) => (p.committed_offset, p.flushed_watermark, Some(Offset::Offset(p.committed_offset))),
+                    Ok(None) => (0, Utc::now() - Duration::days(1), None),
                     Err(e) => {
                         warn!(partition, error = %e, "failed to load partition progress, defaulting to earliest");
-                        (0, Utc::now() - Duration::days(1), Offset::Beginning)
+                        (0, Utc::now() - Duration::days(1), None)
                     }
                 };
 
                 info!(partition, offset, "partition assigned, seeking to committed offset");
-                if let Err(e) = seek_tpl.add_partition_offset(&topic, partition, seek_offset) {
-                    warn!(partition, error = %e, "failed to stage seek offset");
+                // Only seek when we have an explicit prior offset to resume
+                // from. With no progress row, `auto.offset.reset = earliest`
+                // already puts us exactly where we want to start, and
+                // calling `seek()` immediately after a fresh assignment can
+                // race librdkafka's internal per-partition state machine
+                // ("Local: Erroneous state") before it's settled — a race
+                // that simply doesn't exist if we don't call it.
+                if let Some(seek_offset) = seek_offset {
+                    if let Err(e) = consumer.seek(&topic, partition, seek_offset, StdDuration::from_secs(5)) {
+                        warn!(partition, error = %e, "failed to seek to committed offset");
+                    }
                 }
 
                 self.states
                     .lock()
                     .unwrap()
                     .insert(partition, PartitionState::resume_from(partition, offset, watermark));
-            }
-
-            if let Err(e) = consumer.incremental_assign(&seek_tpl) {
-                warn!(error = %e, "failed to assign seeked partitions");
             }
         }
     }

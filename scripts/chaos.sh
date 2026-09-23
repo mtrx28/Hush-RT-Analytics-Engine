@@ -6,17 +6,27 @@
 # Usage: scripts/chaos.sh [duration_secs] [events_per_sec]
 set -euo pipefail
 cd "$(dirname "$0")/.."
+export MSYS_NO_PATHCONV=1
+# On Windows/git-bash, `pwd` returns a POSIX-style path that Docker Desktop
+# doesn't always translate correctly for -v; `pwd -W` (MSYS only) gives the
+# native Windows path instead. Falls back to plain `pwd` elsewhere.
+WORKDIR="$(pwd -W 2>/dev/null || pwd)"
 
 DURATION="${1:-180}"
 RATE="${2:-300}"
 COMPOSE="docker compose -f deploy/docker-compose.yml"
 
+DEVRUN=(docker run --rm --network hush_default
+  -v "${WORKDIR}:/work"
+  -v hush-cargo-registry:/usr/local/cargo/registry
+  -v hush-cargo-target:/work/target
+  -w /work)
+
 echo "== scaling aggregator to 3 replicas =="
 $COMPOSE up -d --scale aggregator=3
 
 echo "== starting loadgen for ${DURATION}s at ${RATE}/s =="
-docker run --rm --network hush_default \
-  -v "$(pwd):/work" -w /work \
+"${DEVRUN[@]}" \
   -e GATEWAY_URL=http://hush-ingest-gateway:8080/v1/events \
   hush-dev \
   cargo run --release -p loadgen -- \
@@ -41,12 +51,16 @@ done
 wait "${LOADGEN_PID}"
 
 echo "== waiting for aggregators to catch up and flush =="
-sleep 15
+# The tail window can take up to WINDOW_SIZE (60s) + ALLOWED_LATENESS (30s)
+# + the idle-check interval (~1s) to close after the last event, plus one
+# flush cycle — 100s covers that with margin. Reconciling any earlier will
+# report the still-open tail window's cells as "missing", which is a
+# harmless timing artifact, not real drift (verified manually: re-running
+# reconcile after the wait shows zero drift).
+sleep 100
 
 echo "== reconciling =="
-export DATABASE_URL="postgres://hush:hush@localhost:5432/hush"
-docker run --rm --network hush_default \
-  -v "$(pwd):/work" -w /work \
+"${DEVRUN[@]}" \
   -e DATABASE_URL="postgres://hush:hush@hush-postgres:5432/hush" \
   hush-dev \
   cargo run --release -p reconcile -- --truth-file /work/truth.json

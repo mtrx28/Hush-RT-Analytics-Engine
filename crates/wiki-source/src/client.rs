@@ -42,7 +42,12 @@ async fn connect_and_consume(
     cfg: &SourceConfig,
     last_event_id: &mut Option<String>,
 ) -> anyhow::Result<()> {
-    let mut req = http.get(&cfg.stream_url);
+    // Wikimedia's EventStreams service rejects requests with no
+    // identifying User-Agent (403 Forbidden) — see
+    // https://meta.wikimedia.org/wiki/User-Agent_policy.
+    let mut req = http
+        .get(&cfg.stream_url)
+        .header("User-Agent", "hush-wiki-source/0.1 (https://github.com/hush-analytics; contact@example.com)");
     if let Some(id) = last_event_id {
         req = req.header("Last-Event-ID", id.clone());
     }
