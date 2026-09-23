@@ -1,0 +1,11 @@
+# Dev/build image: matches the Linux target we actually ship on, so rdkafka
+# links against a real librdkafka instead of fighting MSVC on the host.
+FROM rust:1-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    librdkafka-dev \
+    pkg-config \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
