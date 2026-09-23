@@ -17,6 +17,21 @@ pub struct StatsQuery {
     pub level: i16,
     pub family: Option<String>,
     pub wiki: Option<String>,
+    /// `exact` (default) uses the exact per-partition distinct-user sets.
+    /// `hll` uses the merged HyperLogLog estimate instead, purely to make
+    /// the memory/accuracy trade-off comparable against the same live
+    /// data — see docs/hyperloglog.md. Reads as 0 users everywhere if the
+    /// aggregator wasn't run with HLL_ENABLED=true.
+    #[serde(default)]
+    pub estimator: Estimator,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Estimator {
+    #[default]
+    Exact,
+    Hll,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -71,11 +86,12 @@ pub async fn get_stats(
     }
 
     let cache_key = format!(
-        "{}:{}:{}:{}",
+        "{}:{}:{}:{}:{:?}",
         q.window.to_rfc3339(),
         q.level,
         q.family.clone().unwrap_or_default(),
-        q.wiki.clone().unwrap_or_default()
+        q.wiki.clone().unwrap_or_default(),
+        q.estimator,
     );
     if let Some(hit) = state.cache.get(&cache_key).await {
         return Ok(Json((*hit).clone()));
@@ -88,7 +104,10 @@ pub async fn get_stats(
 
 async fn compute_stats(state: &AppState, q: StatsQuery) -> anyhow::Result<StatsResponse> {
     if q.level == LEVEL_GLOBAL {
-        let global = crate::db::fetch_cell(&state.pool, q.window, &CellKey::global()).await?;
+        let global = match q.estimator {
+            Estimator::Exact => crate::db::fetch_cell(&state.pool, q.window, &CellKey::global()).await?,
+            Estimator::Hll => crate::db::fetch_cell_hll(&state.pool, q.window, &CellKey::global()).await?,
+        };
         let cell = global.map(|c| {
             if suppress_single(&c, state.k) {
                 ResultCell::Visible {
@@ -105,24 +124,53 @@ async fn compute_stats(state: &AppState, q: StatsQuery) -> anyhow::Result<StatsR
                 }
             }
         });
+        let mut cells: Vec<ResultCell> = cell.into_iter().collect();
+        apply_dp_noise(&mut cells, state.dp_enabled, state.dp_epsilon);
         return Ok(StatsResponse {
             window_start: q.window,
             level: q.level,
-            cells: cell.into_iter().collect(),
+            cells,
         });
     }
 
     let parent = parent_key(&q)?;
-    let parent_cell = crate::db::fetch_cell(&state.pool, q.window, &parent).await?;
+    let (parent_cell, children) = match q.estimator {
+        Estimator::Exact => (
+            crate::db::fetch_cell(&state.pool, q.window, &parent).await?,
+            crate::db::fetch_children(&state.pool, q.window, &parent).await?,
+        ),
+        Estimator::Hll => (
+            crate::db::fetch_cell_hll(&state.pool, q.window, &parent).await?,
+            crate::db::fetch_children_hll(&state.pool, q.window, &parent).await?,
+        ),
+    };
     let parent_users = parent_cell.map(|c| c.users).unwrap_or(0);
-    let children = crate::db::fetch_children(&state.pool, q.window, &parent).await?;
-    let cells = suppress(parent_users, children, state.k);
+    let mut cells = suppress(parent_users, children, state.k);
+    apply_dp_noise(&mut cells, state.dp_enabled, state.dp_epsilon);
 
     Ok(StatsResponse {
         window_start: q.window,
         level: q.level,
         cells,
     })
+}
+
+/// Applies calibrated Laplace noise (see `dp.rs`) to every released cell's
+/// `users` count, in place. The suppression decision itself (which cells
+/// made it into `cells` at all) is made beforehand on the true count —
+/// only the released value is noised, not the threshold check.
+fn apply_dp_noise(cells: &mut [ResultCell], enabled: bool, epsilon: f64) {
+    if !enabled {
+        return;
+    }
+    let mut rng = rand::thread_rng();
+    for cell in cells.iter_mut() {
+        let users = match cell {
+            ResultCell::Visible { users, .. } => users,
+            ResultCell::Other { users, .. } => users,
+        };
+        *users = crate::dp::noisy_count(*users, crate::dp::USER_COUNT_SENSITIVITY, epsilon, &mut rng);
+    }
 }
 
 fn parent_key(q: &StatsQuery) -> anyhow::Result<CellKey> {

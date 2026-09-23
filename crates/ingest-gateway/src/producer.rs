@@ -23,9 +23,11 @@ pub fn build_producer(cfg: &AppConfig) -> anyhow::Result<FutureProducer> {
         // A write only counts once every in-sync replica has it.
         .set("acks", "all")
         // Wait briefly to fill larger batches: a little latency for a lot
-        // more throughput.
-        .set("linger.ms", "5")
-        .set("batch.size", "262144")
+        // more throughput. Overridable at runtime (not just recompiled)
+        // specifically so docs/benchmarks.md's tuning numbers could be
+        // measured across configurations without a rebuild per config.
+        .set("linger.ms", &cfg.kafka_linger_ms)
+        .set("batch.size", &cfg.kafka_batch_size)
         .set("compression.type", "lz4")
         .create()?;
     Ok(producer)

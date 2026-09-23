@@ -37,15 +37,17 @@ pub struct RebalanceContext {
     states: SharedStates,
     rt: Handle,
     consumer: Mutex<Option<Weak<StreamConsumer<RebalanceContext>>>>,
+    hll_enabled: bool,
 }
 
 impl RebalanceContext {
-    pub fn new(pool: PgPool, states: SharedStates, rt: Handle) -> Self {
+    pub fn new(pool: PgPool, states: SharedStates, rt: Handle, hll_enabled: bool) -> Self {
         RebalanceContext {
             pool,
             states,
             rt,
             consumer: Mutex::new(None),
+            hll_enabled,
         }
     }
 
@@ -127,7 +129,10 @@ impl ConsumerContext for RebalanceContext {
                 self.states
                     .lock()
                     .unwrap()
-                    .insert(partition, PartitionState::resume_from(partition, offset, watermark));
+                    .insert(
+                        partition,
+                        PartitionState::resume_from(partition, offset, watermark).with_hll_enabled(self.hll_enabled),
+                    );
             }
         }
     }

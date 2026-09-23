@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&cfg.database_url).await?;
     let states: rebalance::SharedStates = Arc::new(Mutex::new(HashMap::new()));
 
-    let context = RebalanceContext::new(pool.clone(), states.clone(), tokio::runtime::Handle::current());
+    let context = RebalanceContext::new(pool.clone(), states.clone(), tokio::runtime::Handle::current(), cfg.hll_enabled);
     let consumer: StreamConsumer<RebalanceContext> = ClientConfig::new()
         .set("bootstrap.servers", &cfg.kafka_brokers)
         .set("group.id", &cfg.group_id)
@@ -69,9 +69,10 @@ async fn main() -> anyhow::Result<()> {
                 let partition = msg.partition();
                 let offset = msg.offset();
                 let mut states = states.lock().unwrap();
-                let state = states
-                    .entry(partition)
-                    .or_insert_with(|| PartitionState::resume_from(partition, offset, event.ts - chrono::Duration::days(1)));
+                let state = states.entry(partition).or_insert_with(|| {
+                    PartitionState::resume_from(partition, offset, event.ts - chrono::Duration::days(1))
+                        .with_hll_enabled(cfg.hll_enabled)
+                });
 
                 match state.process_event(&event, offset) {
                     window::ProcessOutcome::Accepted => {

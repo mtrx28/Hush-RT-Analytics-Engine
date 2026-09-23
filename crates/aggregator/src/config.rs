@@ -8,6 +8,11 @@ pub struct AggregatorConfig {
     pub metrics_addr: String,
     pub flush_interval_ms: u64,
     pub idle_check_interval_ms: u64,
+    /// When true, also maintains a HyperLogLog sketch per cell alongside
+    /// the exact distinct-user set, purely to make the memory/accuracy
+    /// trade-off measurable against real data. Off by default: the exact
+    /// path is always used for privacy suppression regardless of this flag.
+    pub hll_enabled: bool,
 }
 
 impl AggregatorConfig {
@@ -20,6 +25,7 @@ impl AggregatorConfig {
             metrics_addr: env_or("AGGREGATOR_METRICS_ADDR", "0.0.0.0:9102"),
             flush_interval_ms: common::config::env_or_parse("FLUSH_INTERVAL_MS", 1_000),
             idle_check_interval_ms: common::config::env_or_parse("IDLE_CHECK_INTERVAL_MS", 1_000),
+            hll_enabled: common::config::env_or_parse("HLL_ENABLED", false),
         }
     }
 }

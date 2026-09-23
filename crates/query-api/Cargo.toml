@@ -17,6 +17,7 @@ sqlx.workspace = true
 moka.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use common::hierarchy::CellKey;
 use common::window::{window_end, window_start, ALLOWED_LATENESS, IDLE_PARTITION_TIMEOUT};
-use common::Event;
+use common::{Event, HyperLogLog};
 use uuid::Uuid;
 
 /// Per-cell aggregate accumulated in memory for one open window.
@@ -14,8 +14,14 @@ pub struct CellAgg {
     /// user's events always land in the same Kafka partition (partitioned
     /// by pseudonym), the sets kept by different partitions never overlap,
     /// so summing `users.len()` across partitions at query time is exact —
-    /// no HyperLogLog or cross-partition merge needed.
+    /// no HyperLogLog or cross-partition merge needed for correctness.
     pub users: HashSet<String>,
+    /// Populated only when the aggregator runs with `HLL_ENABLED=true`.
+    /// A second, approximate distinct-user estimate kept alongside the
+    /// exact set purely to make the memory/accuracy trade-off measurable
+    /// against real pipeline data — see `docs/hyperloglog.md`. Never used
+    /// for privacy suppression, which always uses the exact count.
+    pub hll: Option<HyperLogLog>,
 }
 
 /// State for one still-open tumbling window on one partition.
@@ -66,6 +72,9 @@ pub struct PartitionState {
     /// Wall-clock time this partition last received an event. Drives idle
     /// detection so a quiet partition doesn't leave windows open forever.
     pub last_event_wall: std::time::Instant,
+    /// Whether to also maintain a HyperLogLog sketch per cell. Off by
+    /// default; existing callers/tests are unaffected. See `CellAgg::hll`.
+    pub hll_enabled: bool,
 }
 
 impl PartitionState {
@@ -79,7 +88,13 @@ impl PartitionState {
             flushed_watermark,
             next_offset: committed_offset,
             last_event_wall: std::time::Instant::now(),
+            hll_enabled: false,
         }
+    }
+
+    pub fn with_hll_enabled(mut self, enabled: bool) -> Self {
+        self.hll_enabled = enabled;
+        self
     }
 
     pub fn watermark(&self) -> DateTime<Utc> {
@@ -114,6 +129,11 @@ impl PartitionState {
             let agg = window.cells.entry(cell_key).or_default();
             agg.events += 1;
             agg.users.insert(event.user.clone());
+            if self.hll_enabled {
+                agg.hll
+                    .get_or_insert_with(HyperLogLog::with_default_precision)
+                    .insert(&event.user);
+            }
         }
         ProcessOutcome::Accepted
     }

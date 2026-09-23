@@ -70,16 +70,32 @@ Postgres against loadgen's ground truth — the pass criterion is zero drift):
 scripts/chaos.sh 180 300   # 180s, 300 events/sec
 ```
 
-## Privacy: known limitation
+## Stretch goals: HyperLogLog and differential privacy (opt-in)
+
+Both are implemented, tested, and off by default — behavior is unchanged
+unless you opt in:
+
+```bash
+# Aggregator: also maintain a HyperLogLog sketch per cell (see docs/hyperloglog.md)
+HLL_ENABLED=true docker compose -f deploy/docker-compose.yml up -d aggregator
+curl 'http://localhost:8081/v1/stats?window=...&level=1&estimator=hll'   # vs the default exact estimator
+
+# query-api: layer calibrated (Laplace-mechanism) noise on top of suppression
+DP_ENABLED=true DP_EPSILON=1.0 docker compose -f deploy/docker-compose.yml up -d --force-recreate query-api
+```
+
+## Privacy: known limitations
 
 `query-api`'s secondary suppression (the differencing-attack defense) sums
 hidden children's user counts directly to decide whether the "Other" bucket
 clears the `k` threshold. A user who appears in more than one hidden child
 is counted once per child there, so that check is an overestimate of the
-true distinct count — approximate, not exact. Calibrated noise
-(differential privacy) is the principled fix and is tracked as a stretch
-goal; see `crates/query-api/src/privacy.rs` for the full explanation and
-`docs/decisions.md` for why thresholds shipped first.
+true distinct count — approximate, not exact. `DP_ENABLED=true` layers the
+principled fix (calibrated Laplace noise) on top, but scoped honestly: it
+noises a single query's answer and does not track a cumulative privacy
+budget across repeated queries, which real DP composition requires — see
+`crates/query-api/src/dp.rs` for what it does and doesn't guarantee, and
+`docs/decisions.md` for why thresholds stay the default.
 
 ## Repo layout
 

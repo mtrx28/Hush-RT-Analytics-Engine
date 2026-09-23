@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod dp;
 mod handlers;
 mod privacy;
 
@@ -17,10 +18,17 @@ use tracing::info;
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
-    /// Flushed windows never change, so caching their (already-suppressed)
-    /// answers is always safe and needs no invalidation.
+    /// Flushed windows never change, so caching their (already-suppressed,
+    /// already-noised) answers is always safe and needs no invalidation.
+    /// With DP noise enabled this also has a nice side effect: repeating
+    /// the exact same query always returns the same cached noisy answer
+    /// rather than fresh noise per request, which avoids leaking more
+    /// signal than intended by letting someone average away the noise
+    /// through repetition.
     pub cache: Cache<String, Arc<StatsResponse>>,
     pub k: u64,
+    pub dp_enabled: bool,
+    pub dp_epsilon: f64,
 }
 
 #[tokio::main]
@@ -39,6 +47,8 @@ async fn main() -> anyhow::Result<()> {
         pool,
         cache,
         k: cfg.privacy_k,
+        dp_enabled: cfg.dp_enabled,
+        dp_epsilon: cfg.dp_epsilon,
     };
 
     let app = Router::new()
@@ -48,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
 
     let addr: SocketAddr = cfg.bind_addr.parse()?;
-    info!(%addr, k = cfg.privacy_k, "query-api listening");
+    info!(%addr, k = cfg.privacy_k, dp_enabled = cfg.dp_enabled, "query-api listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())

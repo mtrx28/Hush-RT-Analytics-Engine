@@ -30,6 +30,7 @@ fn window_with_cells(cells: Vec<(CellKey, u64, Vec<&str>)>) -> Window {
         let agg = CellAgg {
             events,
             users: users.into_iter().map(String::from).collect(),
+            hll: None,
         };
         window.cells.insert(key, agg);
     }

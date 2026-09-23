@@ -14,6 +14,10 @@ pub struct AppConfig {
     pub channel_capacity: usize,
     pub max_batch_events: usize,
     pub metrics_addr: String,
+    /// librdkafka producer settings, overridable per docs/benchmarks.md's
+    /// tuning pass without a rebuild.
+    pub kafka_linger_ms: String,
+    pub kafka_batch_size: String,
 }
 
 impl AppConfig {
@@ -26,6 +30,8 @@ impl AppConfig {
             channel_capacity: env_or_parse("INGEST_CHANNEL_CAPACITY", 10_000),
             max_batch_events: env_or_parse("INGEST_MAX_BATCH_EVENTS", 5_000),
             metrics_addr: env_or("INGEST_METRICS_ADDR", "0.0.0.0:9100"),
+            kafka_linger_ms: env_or("KAFKA_LINGER_MS", "5"),
+            kafka_batch_size: env_or("KAFKA_BATCH_SIZE", "262144"),
         }
     }
 }

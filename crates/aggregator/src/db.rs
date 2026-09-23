@@ -45,13 +45,14 @@ pub async fn flush_windows(
 
     for (window_start, window) in closed {
         for (cell_key, agg) in &window.cells {
+            let hll_bytes = agg.hll.as_ref().map(|h| h.to_bytes());
             sqlx::query(
                 r#"
                 INSERT INTO agg_cells
-                    (window_start, level, family, wiki, namespace, kpartition, events, users)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    (window_start, level, family, wiki, namespace, kpartition, events, users, users_hll)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT (window_start, level, family, wiki, namespace, kpartition)
-                DO UPDATE SET events = EXCLUDED.events, users = EXCLUDED.users
+                DO UPDATE SET events = EXCLUDED.events, users = EXCLUDED.users, users_hll = EXCLUDED.users_hll
                 "#,
             )
             .bind(window_start)
@@ -62,6 +63,7 @@ pub async fn flush_windows(
             .bind(partition)
             .bind(agg.events as i64)
             .bind(agg.users.len() as i64)
+            .bind(hll_bytes)
             .execute(&mut *tx)
             .await?;
         }

@@ -93,6 +93,8 @@ services:
       PSEUDONYM_SALT: ${PSEUDONYM_SALT:-dev-only-change-me}
       INGEST_BIND_ADDR: 0.0.0.0:8080
       INGEST_METRICS_ADDR: 0.0.0.0:9100
+      KAFKA_LINGER_MS: ${KAFKA_LINGER_MS:-5}
+      KAFKA_BATCH_SIZE: ${KAFKA_BATCH_SIZE:-262144}
       RUST_LOG: info
     depends_on:
       kafka-init:
@@ -129,6 +131,7 @@ services:
       AGGREGATOR_GROUP_ID: hush-aggregator
       DATABASE_URL: postgres://hush:hush@postgres:5432/hush
       AGGREGATOR_METRICS_ADDR: 0.0.0.0:9102
+      HLL_ENABLED: ${HLL_ENABLED:-false}
       RUST_LOG: info
     expose:
       - "9102"
@@ -153,6 +156,8 @@ services:
       QUERY_BIND_ADDR: 0.0.0.0:8081
       QUERY_METRICS_ADDR: 0.0.0.0:9103
       PRIVACY_K: 10
+      DP_ENABLED: ${DP_ENABLED:-false}
+      DP_EPSILON: ${DP_EPSILON:-1.0}
       RUST_LOG: info
     depends_on:
       postgres:
