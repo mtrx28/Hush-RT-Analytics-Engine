@@ -2,6 +2,10 @@ apiVersion: 1
 
 datasources:
   - name: Prometheus
+    # Pinned rather than left to Grafana's auto-generated UID, so the
+    # alert-rule provisioning files (deploy/grafana/provisioning/alerting)
+    # can reference this datasource deterministically.
+    uid: hush-prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090

@@ -1,0 +1,67 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: hush-slo-alerts
+    folder: Hush
+    interval: 1m
+    rules:
+      - uid: hush-freshness-over-120s
+        title: Freshness over 120s
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: hush-prometheus
+            model:
+              datasource: { type: prometheus, uid: hush-prometheus }
+              expr: time() - max(aggregator_last_flushed_window_timestamp)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [120] }
+              refId: C
+        for: 1m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "Freshness (seconds since the latest flushed window) has exceeded 120s"
+
+      - uid: hush-query-api-p99-over-target
+        title: query-api p99 latency over target
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: hush-prometheus
+            model:
+              datasource: { type: prometheus, uid: hush-prometheus }
+              expr: histogram_quantile(0.99, sum(rate(query_api_request_duration_seconds_bucket[5m])) by (le)) * 1000
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [200] }
+              refId: C
+        for: 1m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "query-api p99 latency has exceeded 200ms (target from the dashboard's own threshold)"

@@ -1,0 +1,19 @@
+apiVersion: 1
+
+# No external notifier is set up (no Slack/PagerDuty/SMTP) — per the task,
+# firing/resolved only needs to be visible on the dashboard, which Grafana
+# tracks as alert-rule evaluation state regardless of whether a contact
+# point's delivery actually succeeds. Every alert rule still has to name a
+# contact point, so this one points nowhere real; it exists to satisfy that
+# requirement, not to send anything. Delivery attempts to it will fail
+# quietly in Grafana's own logs — that's expected, not a misconfiguration.
+contactPoints:
+  - orgId: 1
+    name: dashboard-only
+    receivers:
+      - uid: dashboard-only-receiver
+        type: email
+        settings:
+          addresses: dashboard-only@localhost
+          singleEmail: true
+        disableResolveMessage: false

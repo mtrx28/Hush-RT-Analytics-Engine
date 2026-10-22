@@ -38,8 +38,19 @@ DEVRUN=(docker run --rm --network hush_default
   -v hush-cargo-target:/work/target
   -w /work)
 
+# Explicitly scoped to the services the controlled test actually needs.
+# `up -d` with no service names starts *everything* in the compose file,
+# including wiki-source — which, now that its User-Agent bug is fixed,
+# successfully ingests real Wikipedia traffic. That traffic lands in the
+# same cells loadgen's synthetic events do, breaking reconcile's exact
+# comparison against loadgen's own ground truth (observed directly: a run
+# with wiki-source left running produced 75 mismatches / 860 unexpected
+# cells, all real Wikipedia wikis/namespaces loadgen never generates, not
+# a real correctness regression). wiki-source is validated separately.
+SERVICES="kafka postgres ingest-gateway aggregator query-api prometheus grafana"
+
 echo "== scaling aggregator to 3 replicas =="
-$COMPOSE up -d --scale aggregator=3
+$COMPOSE up -d --scale aggregator=3 ${SERVICES}
 
 echo "== starting loadgen for ${DURATION}s at ${RATE}/s =="
 "${DEVRUN[@]}" \
@@ -62,7 +73,7 @@ while [ $SECONDS -lt $END ]; do
     annotate_kill "killed ${VICTIM_NAME}"
     # compose restart policy (or a fresh `up -d`) brings a replacement back;
     # this forces the consumer group to rebalance.
-    $COMPOSE up -d --scale aggregator=3
+    $COMPOSE up -d --scale aggregator=3 ${SERVICES}
   fi
 done
 
