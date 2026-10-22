@@ -13,6 +13,10 @@ use crate::window::Window;
 /// traffic doesn't delay flushing already-closed windows.
 pub async fn run_flush_loop(pool: PgPool, states: SharedStates, interval_ms: u64) {
     let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms));
+    // Tracks this instance's own high-water mark so the gauge only ever
+    // moves forward, even though partitions flush independently and out of
+    // order relative to each other within a tick.
+    let mut last_flushed_window: Option<DateTime<Utc>> = None;
     loop {
         ticker.tick().await;
 
@@ -33,9 +37,17 @@ pub async fn run_flush_loop(pool: PgPool, states: SharedStates, interval_ms: u64
 
         for (partition, closed, committed_offset, watermark) in batches {
             let n_windows = closed.len();
+            let max_window_start = closed.iter().map(|(window_start, _)| *window_start).max();
             match db::flush_windows(&pool, partition, &closed, committed_offset, watermark).await {
                 Ok(()) => {
                     metrics::counter!("aggregator_windows_flushed_total").increment(n_windows as u64);
+                    if let Some(window_start) = max_window_start {
+                        if last_flushed_window.is_none_or(|prev| window_start > prev) {
+                            last_flushed_window = Some(window_start);
+                            metrics::gauge!("aggregator_last_flushed_window_timestamp")
+                                .set(window_start.timestamp() as f64);
+                        }
+                    }
                     info!(partition, n_windows, committed_offset, %watermark, "flushed closed windows");
                 }
                 Err(e) => {

@@ -2,6 +2,7 @@ mod config;
 mod db;
 mod dp;
 mod handlers;
+mod observability;
 mod privacy;
 
 use axum::routing::get;
@@ -38,6 +39,17 @@ async fn main() -> anyhow::Result<()> {
 
     let metrics_addr: SocketAddr = cfg.metrics_addr.parse()?;
     PrometheusBuilder::new()
+        // Without explicit buckets, `metrics::histogram!` renders as a
+        // Prometheus *summary* (pre-computed per-instance quantiles, no
+        // `_bucket` series) instead of a real histogram. Summaries can't be
+        // aggregated across replicas with `histogram_quantile()` — exactly
+        // what the dashboard's p50/p95/p99 panel needs if query-api is ever
+        // scaled beyond one instance, so buckets are set explicitly here
+        // rather than relying on the library's default.
+        .set_buckets_for_metric(
+            metrics_exporter_prometheus::Matcher::Full("query_api_request_duration_seconds".to_string()),
+            &[0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+        )?
         .with_http_listener(metrics_addr)
         .install()?;
 
@@ -55,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/stats", get(handlers::get_stats))
         .route("/v1/windows/latest", get(handlers::get_latest_window))
         .route("/healthz", get(handlers::healthz))
+        .route_layer(axum::middleware::from_fn(observability::track_metrics))
         .with_state(state);
 
     let addr: SocketAddr = cfg.bind_addr.parse()?;

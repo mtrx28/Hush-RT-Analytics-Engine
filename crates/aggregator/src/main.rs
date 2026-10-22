@@ -33,6 +33,15 @@ async fn main() -> anyhow::Result<()> {
         .set("enable.auto.commit", "false")
         .set("auto.offset.reset", "earliest")
         .set("partition.assignment.strategy", "cooperative-sticky")
+        // librdkafka's default session.timeout.ms is 45s — far too slow for
+        // a system whose whole point is sub-minute windows. A dead member
+        // isn't detected (and its partitions reassigned) until the broker
+        // stops receiving heartbeats for this long. 10s (with heartbeats
+        // every third of that, the recommended ratio) still comfortably
+        // tolerates GC pauses / transient network blips without false-
+        // positive evicting a live consumer.
+        .set("session.timeout.ms", "10000")
+        .set("heartbeat.interval.ms", "3000")
         .create_with_context(context)?;
     let consumer = Arc::new(consumer);
     consumer.context().bind_consumer(&consumer);
