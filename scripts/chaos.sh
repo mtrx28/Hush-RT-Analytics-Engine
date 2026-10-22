@@ -15,6 +15,22 @@ WORKDIR="$(pwd -W 2>/dev/null || pwd)"
 DURATION="${1:-180}"
 RATE="${2:-300}"
 COMPOSE="docker compose -f deploy/docker-compose.yml"
+GRAFANA_URL="${GRAFANA_URL:-http://localhost:3000}"
+GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-hush}"
+
+# Marks an annotation at the current instant on the "Hush Consumer View"
+# dashboard (any panel querying the "chaos-kill" tag picks it up — see
+# deploy/grafana/dashboards/hush-consumer-view.json). Best-effort: a
+# Grafana hiccup shouldn't fail the chaos run itself.
+annotate_kill() {
+  local text="$1"
+  local now_ms
+  now_ms=$(( $(date +%s%N) / 1000000 ))
+  curl -s -u "admin:${GRAFANA_ADMIN_PASSWORD}" -X POST "${GRAFANA_URL}/api/annotations" \
+    -H "Content-Type: application/json" \
+    -d "{\"tags\":[\"chaos-kill\"],\"text\":\"${text}\",\"time\":${now_ms}}" \
+    >/dev/null || echo "warning: failed to post Grafana annotation (continuing)"
+}
 
 DEVRUN=(docker run --rm --network hush_default
   -v "${WORKDIR}:/work"
@@ -40,8 +56,10 @@ while [ $SECONDS -lt $END ]; do
   sleep $((RANDOM % 40 + 20))
   VICTIM=$($COMPOSE ps -q aggregator | shuf -n 1 || true)
   if [ -n "${VICTIM:-}" ]; then
-    echo "killing aggregator container ${VICTIM}"
+    VICTIM_NAME=$(docker inspect --format='{{.Name}}' "${VICTIM}" | sed 's#^/##')
+    echo "killing aggregator container ${VICTIM_NAME}"
     docker kill "${VICTIM}" || true
+    annotate_kill "killed ${VICTIM_NAME}"
     # compose restart policy (or a fresh `up -d`) brings a replacement back;
     # this forces the consumer group to rebalance.
     $COMPOSE up -d --scale aggregator=3

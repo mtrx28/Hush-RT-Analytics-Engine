@@ -1,0 +1,222 @@
+{
+  "title": "Hush Consumer View",
+  "uid": "hush-consumer-view",
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "annotations": {
+    "list": [
+      {
+        "name": "Chaos kills",
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "iconColor": "red",
+        "tags": ["chaos-kill"],
+        "type": "tags"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Freshness (s since latest flushed window)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 90 },
+              { "color": "red", "value": 120 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "time() - max(aggregator_last_flushed_window_timestamp)" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Completeness (windows flushed vs. expected)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "green", "value": 90 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "(rate(aggregator_windows_flushed_total[5m]) * 60 / 12) * 100" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Late events (%)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum(rate(aggregator_late_events_total[5m])) or vector(0)) / ((sum(rate(aggregator_events_processed_total[5m])) or vector(0)) + (sum(rate(aggregator_late_events_total[5m])) or vector(0)) + (sum(rate(aggregator_duplicate_events_total[5m])) or vector(0))) * 100"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Duplicate events (%)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum(rate(aggregator_duplicate_events_total[5m])) or vector(0)) / ((sum(rate(aggregator_events_processed_total[5m])) or vector(0)) + (sum(rate(aggregator_late_events_total[5m])) or vector(0)) + (sum(rate(aggregator_duplicate_events_total[5m])) or vector(0))) * 100"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "query-api p99 latency",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 200 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(query_api_request_duration_seconds_bucket[5m])) by (le)) * 1000"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "query-api error rate",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(query_api_errors_total[5m]) or vector(0)) / sum(rate(query_api_requests_total[5m])) * 100"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Max consumer lag (any partition)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1000 },
+              { "color": "red", "value": 10000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "max(aggregator_consumer_lag)" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Ingest accept rate",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 6 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      },
+      "targets": [
+        { "expr": "rate(ingest_events_accepted_total[1m])" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "query-api latency (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(query_api_request_duration_seconds_bucket[5m])) by (le)) * 1000", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(query_api_request_duration_seconds_bucket[5m])) by (le)) * 1000", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(query_api_request_duration_seconds_bucket[5m])) by (le)) * 1000", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "query-api requests / errors per sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        { "expr": "rate(query_api_requests_total[1m])", "legendFormat": "requests" },
+        { "expr": "rate(query_api_errors_total[1m])", "legendFormat": "errors" }
+      ]
+    }
+  ]
+}
